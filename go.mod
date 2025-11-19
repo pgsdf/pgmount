@@ -9,5 +9,6 @@ require (
 
 require (
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
+	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 	golang.org/x/sys v0.15.0 // indirect
 )

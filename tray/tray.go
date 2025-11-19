@@ -5,9 +5,11 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
+	shellquote "github.com/kballard/go-shellquote"
 	"fyne.io/systray"
 	"github.com/pgsdf/pgmount/config"
 	"github.com/pgsdf/pgmount/device"
@@ -26,6 +28,7 @@ type Icon struct {
 	menuCloseChan chan struct{}
 	onMountFunc   func(dev *device.Device) error
 	onUnmountFunc func(dev *device.Device) error
+	onQuitFunc    func()
 }
 
 // New creates a new tray icon
@@ -268,6 +271,11 @@ func (i *Icon) SetUnmountCallback(fn func(dev *device.Device) error) {
 	i.onUnmountFunc = fn
 }
 
+// SetQuitCallback sets the callback for quit action
+func (i *Icon) SetQuitCallback(fn func()) {
+	i.onQuitFunc = fn
+}
+
 // Menu action handlers
 
 func (i *Icon) onMountDevice(dev *device.Device) {
@@ -342,12 +350,40 @@ func (i *Icon) onOpenDevice(dev *device.Device) {
 		return
 	}
 
+	// Validate that the path is absolute and clean to prevent command injection
+	absPath, err := filepath.Abs(dev.MountPoint)
+	if err != nil {
+		log.Printf("Failed to get absolute path: %v", err)
+		i.showNotification("Open Failed", fmt.Sprintf("Invalid path: %v", err))
+		return
+	}
+
+	// Clean the path to remove any .. or other traversal attempts
+	cleanPath := filepath.Clean(absPath)
+
+	// Verify the path exists
+	if _, err := os.Stat(cleanPath); err != nil {
+		log.Printf("Path does not exist: %v", err)
+		i.showNotification("Open Failed", "Mount point does not exist")
+		return
+	}
+
 	fileManager := i.config.FileManager
 	if fileManager == "" {
 		fileManager = "xdg-open"
 	}
 
-	cmd := exec.Command(fileManager, dev.MountPoint)
+	// Parse file manager command to handle arguments safely
+	parts, err := shellquote.Split(fileManager)
+	if err != nil || len(parts) == 0 {
+		log.Printf("Invalid file manager command: %v", err)
+		i.showNotification("Open Failed", "Invalid file manager configuration")
+		return
+	}
+
+	// Execute file manager with path as separate argument
+	args := append(parts[1:], cleanPath)
+	cmd := exec.Command(parts[0], args...)
 	if err := cmd.Start(); err != nil {
 		log.Printf("Failed to open file manager: %v", err)
 		i.showNotification("Open Failed", fmt.Sprintf("Failed to open file manager: %v", err))
@@ -424,7 +460,12 @@ func (i *Icon) onAbout() {
 
 func (i *Icon) onQuit() {
 	log.Println("Tray: Quit clicked")
-	os.Exit(0)
+	if i.onQuitFunc != nil {
+		i.onQuitFunc()
+	} else {
+		// Fallback to closing the tray icon if no callback is set
+		i.Close()
+	}
 }
 
 // Helper functions
