@@ -102,6 +102,13 @@ func main() {
 				return d.UnmountDevice(dev)
 			})
 
+			// Set up device changed callback to immediately update tray
+			d.SetDeviceChangedCallback(func() {
+				if trayIcon != nil {
+					trayIcon.UpdateDevices()
+				}
+			})
+
 			// Set up quit callback for proper cleanup
 			trayIcon.SetQuitCallback(func() {
 				log.Println("Quit requested from tray icon")
