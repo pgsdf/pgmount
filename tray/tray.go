@@ -23,6 +23,7 @@ type Icon struct {
 	quitChan      chan struct{}
 	readyChan     chan struct{}
 	menuMutex     sync.Mutex
+	menuCloseChan chan struct{}
 	onMountFunc   func(dev *device.Device) error
 	onUnmountFunc func(dev *device.Device) error
 }
@@ -30,13 +31,14 @@ type Icon struct {
 // New creates a new tray icon
 func New(cfg *config.Config, mgr *device.Manager) (*Icon, error) {
 	icon := &Icon{
-		config:     cfg,
-		deviceMgr:  mgr,
-		visible:    true,
-		updateChan: make(chan struct{}, 1),
-		closeChan:  make(chan struct{}),
-		quitChan:   make(chan struct{}),
-		readyChan:  make(chan struct{}),
+		config:        cfg,
+		deviceMgr:     mgr,
+		visible:       true,
+		updateChan:    make(chan struct{}, 1),
+		closeChan:     make(chan struct{}),
+		quitChan:      make(chan struct{}),
+		readyChan:     make(chan struct{}),
+		menuCloseChan: make(chan struct{}),
 	}
 
 	// Start systray in a goroutine
@@ -110,8 +112,14 @@ func (i *Icon) rebuildMenu() {
 		}
 	}
 
+	// Stop all existing menu item handlers before clearing the menu
+	close(i.menuCloseChan)
+
 	// Clear existing menu
 	systray.ResetMenu()
+
+	// Create new channel for new menu item handlers
+	i.menuCloseChan = make(chan struct{})
 
 	// Add header
 	systray.AddMenuItem("Devices", "Removable devices").Disable()
@@ -201,10 +209,16 @@ func (i *Icon) addDeviceMenuItems(devices []*device.Device) {
 
 // handleMenuItem handles menu item clicks
 func (i *Icon) handleMenuItem(item *systray.MenuItem, action func()) {
+	// Capture the current menu close channel
+	menuCloseChan := i.menuCloseChan
+
 	for {
 		select {
 		case <-item.ClickedCh:
 			action()
+		case <-menuCloseChan:
+			// Menu is being rebuilt, stop this handler
+			return
 		case <-i.closeChan:
 			return
 		}
