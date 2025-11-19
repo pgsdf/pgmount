@@ -129,34 +129,38 @@ func (i *Icon) rebuildMenu() {
 	if len(partitions) == 0 {
 		systray.AddMenuItem("No devices", "No removable devices found").Disable()
 	} else {
-		i.addDeviceMenuItems(partitions)
+		i.addDeviceMenuItems(partitions, i.menuCloseChan)
 	}
 
 	systray.AddSeparator()
 
+	// Capture the menu close channel before starting handlers
+	// to prevent race condition where handlers capture the wrong channel
+	menuCloseChan := i.menuCloseChan
+
 	// Add "Mount All"
 	mMountAll := systray.AddMenuItem("Mount All", "Mount all available devices")
-	go i.handleMenuItem(mMountAll, func() { i.onMountAll() })
+	go i.handleMenuItem(mMountAll, menuCloseChan, func() { i.onMountAll() })
 
 	// Add "Unmount All"
 	mUnmountAll := systray.AddMenuItem("Unmount All", "Unmount all mounted devices")
-	go i.handleMenuItem(mUnmountAll, func() { i.onUnmountAll() })
+	go i.handleMenuItem(mUnmountAll, menuCloseChan, func() { i.onUnmountAll() })
 
 	systray.AddSeparator()
 
 	// Add "Refresh"
 	mRefresh := systray.AddMenuItem("Refresh", "Refresh device list")
-	go i.handleMenuItem(mRefresh, func() { i.onRefresh() })
+	go i.handleMenuItem(mRefresh, menuCloseChan, func() { i.onRefresh() })
 
 	// Add "About"
 	mAbout := systray.AddMenuItem("About", "About PGMount")
-	go i.handleMenuItem(mAbout, func() { i.onAbout() })
+	go i.handleMenuItem(mAbout, menuCloseChan, func() { i.onAbout() })
 
 	systray.AddSeparator()
 
 	// Add "Quit"
 	mQuit := systray.AddMenuItem("Quit", "Quit PGMount")
-	go i.handleMenuItem(mQuit, func() { i.onQuit() })
+	go i.handleMenuItem(mQuit, menuCloseChan, func() { i.onQuit() })
 
 	// Handle auto-hide
 	if i.config.Tray.AutoHide {
@@ -165,7 +169,7 @@ func (i *Icon) rebuildMenu() {
 }
 
 // addDeviceMenuItems adds device-specific menu items
-func (i *Icon) addDeviceMenuItems(devices []*device.Device) {
+func (i *Icon) addDeviceMenuItems(devices []*device.Device, menuCloseChan chan struct{}) {
 	for _, dev := range devices {
 		// Create a copy for the closure
 		device := dev
@@ -181,21 +185,21 @@ func (i *Icon) addDeviceMenuItems(devices []*device.Device) {
 		if device.IsMounted {
 			// Add "Open" option
 			mOpen := mDevice.AddSubMenuItem("Open in File Manager", "Open device in file manager")
-			go i.handleMenuItem(mOpen, func() { i.onOpenDevice(device) })
+			go i.handleMenuItem(mOpen, menuCloseChan, func() { i.onOpenDevice(device) })
 
 			// Add "Unmount" option
 			mUnmount := mDevice.AddSubMenuItem("Unmount", "Unmount device")
-			go i.handleMenuItem(mUnmount, func() { i.onUnmountDevice(device) })
+			go i.handleMenuItem(mUnmount, menuCloseChan, func() { i.onUnmountDevice(device) })
 
 			// Add "Eject" option
 			if device.IsRemovable {
 				mEject := mDevice.AddSubMenuItem("Eject", "Eject device")
-				go i.handleMenuItem(mEject, func() { i.onEjectDevice(device) })
+				go i.handleMenuItem(mEject, menuCloseChan, func() { i.onEjectDevice(device) })
 			}
 		} else {
 			// Add "Mount" option
 			mMount := mDevice.AddSubMenuItem("Mount", "Mount device")
-			go i.handleMenuItem(mMount, func() { i.onMountDevice(device) })
+			go i.handleMenuItem(mMount, menuCloseChan, func() { i.onMountDevice(device) })
 		}
 
 		// Add device info
@@ -208,10 +212,7 @@ func (i *Icon) addDeviceMenuItems(devices []*device.Device) {
 }
 
 // handleMenuItem handles menu item clicks
-func (i *Icon) handleMenuItem(item *systray.MenuItem, action func()) {
-	// Capture the current menu close channel
-	menuCloseChan := i.menuCloseChan
-
+func (i *Icon) handleMenuItem(item *systray.MenuItem, menuCloseChan chan struct{}, action func()) {
 	for {
 		select {
 		case <-item.ClickedCh:
