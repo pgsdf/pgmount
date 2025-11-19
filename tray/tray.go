@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"sync"
 	"time"
 
 	"fyne.io/systray"
@@ -20,6 +21,8 @@ type Icon struct {
 	updateChan    chan struct{}
 	closeChan     chan struct{}
 	quitChan      chan struct{}
+	readyChan     chan struct{}
+	menuMutex     sync.Mutex
 	onMountFunc   func(dev *device.Device) error
 	onUnmountFunc func(dev *device.Device) error
 }
@@ -33,17 +36,18 @@ func New(cfg *config.Config, mgr *device.Manager) (*Icon, error) {
 		updateChan: make(chan struct{}, 1),
 		closeChan:  make(chan struct{}),
 		quitChan:   make(chan struct{}),
+		readyChan:  make(chan struct{}),
 	}
 
 	// Start systray in a goroutine
 	go systray.Run(icon.onReady, icon.onExit)
 
-	// Wait a bit for systray to initialize
-	time.Sleep(100 * time.Millisecond)
+	// Wait for systray to be ready
+	<-icon.readyChan
 
 	log.Println("Tray icon initialized successfully")
 
-	// Start update handler
+	// Start update handler after systray is ready
 	go icon.handleUpdates()
 
 	return icon, nil
@@ -58,6 +62,9 @@ func (i *Icon) onReady() {
 
 	// Build initial menu
 	i.rebuildMenu()
+
+	// Signal that systray is ready
+	close(i.readyChan)
 }
 
 // onExit is called when systray is exiting
@@ -84,6 +91,10 @@ func (i *Icon) handleUpdates() {
 
 // rebuildMenu rebuilds the entire menu
 func (i *Icon) rebuildMenu() {
+	// Lock to prevent concurrent menu modifications
+	i.menuMutex.Lock()
+	defer i.menuMutex.Unlock()
+
 	// Get current devices
 	devices, err := i.deviceMgr.Scan()
 	if err != nil {
