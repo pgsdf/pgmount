@@ -1,0 +1,136 @@
+# PGMount Configuration File
+# Location: ~/.config/pgmount/config.yml
+
+# Enable automatic mounting of new devices
+automount: true
+
+# Verbose logging output
+verbose: false
+
+# Quiet mode - suppress non-error messages
+quiet: false
+
+# Base directory for mount points
+# Devices will be mounted at /media/DEVICE_LABEL
+mount_base: /media
+
+# File manager to open mounted directories
+# Set to empty string to disable
+file_manager: xdg-open
+
+# Desktop notification settings
+notifications:
+  # Enable desktop notifications
+  enabled: true
+  
+  # Default notification timeout in seconds
+  timeout: 1.5
+  
+  # Per-event notification timeouts
+  # Positive number = timeout in seconds
+  # -1 = use default timeout
+  # 0 or false = disable notification for this event
+  device_mounted: 5.0
+  device_unmounted: false
+  device_added: false
+  device_removed: false
+  device_unlocked: 3.0
+  device_locked: false
+  job_failed: 10.0
+
+# System tray icon settings
+tray:
+  # Enable system tray icon
+  enabled: false
+  
+  # Auto-hide tray when no devices are available
+  auto_hide: true
+  
+  # Icon name (from icon theme)
+  icon_name: drive-removable-media
+
+# GELI encryption settings
+geli:
+  # Enable GELI support
+  enabled: true
+  
+  # Custom password prompt command
+  # Leave empty to use built-in prompt
+  # Example: "zenity --password --title='Unlock {label}'"
+  password_cmd: ""
+  
+  # Password cache timeout in seconds
+  # 0 = no caching
+  cache_timeout: 0
+  
+  # Keyfiles for specific devices (by UUID)
+  keyfiles: {}
+    # Example:
+    # "12345678-abcd-ef00-1234-56789abcdef0": "/home/user/.keys/usb.key"
+
+# Per-device configuration
+device_config: []
+  # Example configurations:
+  
+  # Configuration by UUID
+  # - id_uuid: "ABCD-1234"
+  #   automount: false
+  #   ignore: false
+  #   options:
+  #     - noexec
+  #     - nosuid
+  
+  # Configuration by label
+  # - id_label: "MY_USB"
+  #   automount: true
+  #   options:
+  #     - locale=en_US.UTF-8
+  #     - longnames
+  
+  # Configuration by device path
+  # - device_path: "/dev/da0p1"
+  #   ignore: true  # Never mount this device
+
+# Default mount options by filesystem type
+mount_options:
+  default:
+    # FAT filesystems
+    vfat:
+      - locale=en_US.UTF-8
+      - longnames
+    
+    # MS-DOS filesystem
+    msdos:
+      - locale=en_US.UTF-8
+      - longnames
+    
+    # NTFS filesystem
+    ntfs:
+      - locale=en_US.UTF-8
+    
+    # ext2/3/4 filesystems
+    ext2: []
+    ext3: []
+    ext4: []
+    
+    # FreeBSD native filesystems
+    ufs: []
+    zfs: []
+
+# Event hooks
+# Execute commands when specific events occur
+# Available variables: {device}, {label}, {uuid}, {mount_point}
+event_hooks: {}
+  # Examples:
+  
+  # Log device additions
+  # device_added: "logger 'Device {device} ({label}) was connected'"
+  
+  # Send custom notification on mount
+  # device_mounted: "notify-send 'USB Drive' '{label} is ready at {mount_point}'"
+  
+  # Run backup script when specific device is mounted
+  # device_mounted: "[ '{uuid}' = 'BACKUP-UUID' ] && /home/user/bin/backup.sh {mount_point}"
+  
+  # Clean up thumbnails on unmount
+  # device_unmounted: "rm -rf {mount_point}/.Trash-* {mount_point}/.thumbnails"
