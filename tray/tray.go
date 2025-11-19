@@ -107,11 +107,29 @@ func (i *Icon) rebuildMenu() {
 		return
 	}
 
-	// Filter for partitions only
-	partitions := []*device.Device{}
+	// Filter for partitions, but also include whole disks if they have no partitions
+	displayDevices := []*device.Device{}
+	diskHasPartitions := make(map[string]bool)
+
+	// First pass: collect all partitions and track which disks have partitions
 	for _, dev := range devices {
 		if dev.IsPartition && dev.IsRemovable {
-			partitions = append(partitions, dev)
+			displayDevices = append(displayDevices, dev)
+			// Extract parent disk name (e.g., "da0" from "da0p1")
+			parentDisk := getParentDiskName(dev.Name)
+			if parentDisk != "" {
+				diskHasPartitions[parentDisk] = true
+			}
+		}
+	}
+
+	// Second pass: add whole disks that don't have partitions
+	for _, dev := range devices {
+		if !dev.IsPartition && dev.IsRemovable {
+			if !diskHasPartitions[dev.Name] {
+				displayDevices = append(displayDevices, dev)
+				log.Printf("Adding unpartitioned disk to tray: %s", dev.Name)
+			}
 		}
 	}
 
@@ -129,10 +147,10 @@ func (i *Icon) rebuildMenu() {
 	systray.AddSeparator()
 
 	// Add device menu items
-	if len(partitions) == 0 {
+	if len(displayDevices) == 0 {
 		systray.AddMenuItem("No devices", "No removable devices found").Disable()
 	} else {
-		i.addDeviceMenuItems(partitions, i.menuCloseChan)
+		i.addDeviceMenuItems(displayDevices, i.menuCloseChan)
 	}
 
 	systray.AddSeparator()
@@ -167,7 +185,7 @@ func (i *Icon) rebuildMenu() {
 
 	// Handle auto-hide
 	if i.config.Tray.AutoHide {
-		i.visible = len(partitions) > 0
+		i.visible = len(displayDevices) > 0
 	}
 }
 
@@ -183,9 +201,21 @@ func (i *Icon) addDeviceMenuItems(devices []*device.Device, menuCloseChan chan s
 			displayName += " ●"
 		}
 
+		// Mark whole disks (unpartitioned) with a special indicator
+		if !device.IsPartition {
+			displayName += " [Raw Disk]"
+		}
+
 		mDevice := systray.AddMenuItem(displayName, device.Path)
 
-		if device.IsMounted {
+		// Handle whole disk vs partition differently
+		if !device.IsPartition {
+			// Whole disk (no partitions) - can't be mounted directly
+			mInfo := mDevice.AddSubMenuItem("No partitions found", "This disk has no partition table")
+			mInfo.Disable()
+			mDevice.AddSubMenuItem("Format/partition this disk using Disk Utility", "Use gpart or other tools").Disable()
+		} else if device.IsMounted {
+			// Mounted partition
 			// Add "Open" option
 			mOpen := mDevice.AddSubMenuItem("Open in File Manager", "Open device in file manager")
 			go i.handleMenuItem(mOpen, menuCloseChan, func() { i.onOpenDevice(device) })
@@ -200,13 +230,17 @@ func (i *Icon) addDeviceMenuItems(devices []*device.Device, menuCloseChan chan s
 				go i.handleMenuItem(mEject, menuCloseChan, func() { i.onEjectDevice(device) })
 			}
 		} else {
+			// Unmounted partition
 			// Add "Mount" option
 			mMount := mDevice.AddSubMenuItem("Mount", "Mount device")
 			go i.handleMenuItem(mMount, menuCloseChan, func() { i.onMountDevice(device) })
 		}
 
 		// Add device info
-		infoText := fmt.Sprintf("%s • %s", device.Path, device.FSType)
+		infoText := fmt.Sprintf("%s", device.Path)
+		if device.FSType != "" {
+			infoText += fmt.Sprintf(" • %s", device.FSType)
+		}
 		if device.Size > 0 {
 			infoText += fmt.Sprintf(" • %s", formatSize(device.Size))
 		}
@@ -498,6 +532,28 @@ func formatSize(bytes uint64) string {
 	default:
 		return fmt.Sprintf("%d B", bytes)
 	}
+}
+
+// getParentDiskName extracts the parent disk name from a partition name
+// For example: "da0p1" -> "da0", "ada0s1" -> "ada0"
+func getParentDiskName(partitionName string) string {
+	// Handle common FreeBSD partition naming schemes:
+	// - da0p1, da0p2 (GPT partitions)
+	// - da0s1, da0s2 (MBR slices)
+	// - ada0p1, ada0p2
+	// - mmcsd0s1, etc.
+
+	// Find the first occurrence of 'p' or 's' followed by a digit
+	for i := 0; i < len(partitionName); i++ {
+		if (partitionName[i] == 'p' || partitionName[i] == 's') && i > 0 {
+			// Check if next character is a digit
+			if i+1 < len(partitionName) && partitionName[i+1] >= '0' && partitionName[i+1] <= '9' {
+				return partitionName[:i]
+			}
+		}
+	}
+
+	return ""
 }
 
 // getIcon returns the icon data for the tray
