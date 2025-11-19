@@ -87,6 +87,7 @@ func main() {
 
 	// Initialize tray icon if enabled
 	var trayIcon *tray.Icon
+	var trayStopChan chan struct{}
 	if cfg.Tray.Enabled {
 		trayIcon, err = tray.New(cfg, d.GetDeviceManager())
 		if err != nil {
@@ -101,12 +102,31 @@ func main() {
 				return d.UnmountDevice(dev)
 			})
 
-			// Update tray with current devices
+			// Set up quit callback for proper cleanup
+			trayIcon.SetQuitCallback(func() {
+				log.Println("Quit requested from tray icon")
+				if trayStopChan != nil {
+					close(trayStopChan)
+				}
+				trayIcon.Close()
+				d.Stop()
+				os.Exit(0)
+			})
+
+			// Update tray with current devices periodically
+			trayStopChan = make(chan struct{})
 			go func() {
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+
 				for {
-					time.Sleep(5 * time.Second)
-					if trayIcon != nil {
-						trayIcon.UpdateDevices()
+					select {
+					case <-ticker.C:
+						if trayIcon != nil {
+							trayIcon.UpdateDevices()
+						}
+					case <-trayStopChan:
+						return
 					}
 				}
 			}()
@@ -130,6 +150,9 @@ func main() {
 	log.Println("Shutting down...")
 
 	// Cleanup
+	if trayStopChan != nil {
+		close(trayStopChan)
+	}
 	if trayIcon != nil {
 		trayIcon.Close()
 	}

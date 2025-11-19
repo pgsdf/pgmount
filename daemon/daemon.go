@@ -6,10 +6,12 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	shellquote "github.com/kballard/go-shellquote"
 	"github.com/pgsdf/pgmount/config"
 	"github.com/pgsdf/pgmount/device"
 	"github.com/pgsdf/pgmount/notify"
@@ -17,13 +19,14 @@ import (
 
 // Daemon handles automounting and device events
 type Daemon struct {
-	config      *config.Config
-	deviceMgr   *device.Manager
-	devdPipe    *os.File
-	stopChan    chan struct{}
-	wg          sync.WaitGroup
-	mu          sync.Mutex
-	mounted     map[string]*device.Device
+	config    *config.Config
+	deviceMgr *device.Manager
+	// TODO: devd socket monitoring could be implemented here for real-time events
+	// instead of polling. See monitorDevd() for details.
+	stopChan chan struct{}
+	wg       sync.WaitGroup
+	mu       sync.Mutex
+	mounted  map[string]*device.Device
 }
 
 // New creates a new daemon instance
@@ -59,9 +62,6 @@ func (d *Daemon) Start() error {
 func (d *Daemon) Stop() {
 	log.Println("Stopping daemon...")
 	close(d.stopChan)
-	if d.devdPipe != nil {
-		d.devdPipe.Close()
-	}
 	d.wg.Wait()
 }
 
@@ -349,11 +349,27 @@ func (d *Daemon) unlockDevice(dev *device.Device) error {
 // getPassword prompts for a password
 func (d *Daemon) getPassword(dev *device.Device) (string, error) {
 	if d.config.GELI.PasswordCmd != "" {
-		// Use custom password command
-		cmd := exec.Command("sh", "-c", d.config.GELI.PasswordCmd)
+		// Parse and validate the password command to prevent command injection
+		// Split the command into program and arguments
+		parts, err := shellquote.Split(d.config.GELI.PasswordCmd)
+		if err != nil {
+			return "", fmt.Errorf("invalid password command: %w", err)
+		}
+		if len(parts) == 0 {
+			return "", fmt.Errorf("empty password command")
+		}
+
+		// Execute command directly without shell to prevent injection
+		var cmd *exec.Cmd
+		if len(parts) == 1 {
+			cmd = exec.Command(parts[0])
+		} else {
+			cmd = exec.Command(parts[0], parts[1:]...)
+		}
+
 		output, err := cmd.Output()
 		if err != nil {
-			return "", err
+			return "", fmt.Errorf("password command failed: %w", err)
 		}
 		return strings.TrimSpace(string(output)), nil
 	}
@@ -371,11 +387,17 @@ func (d *Daemon) getPassword(dev *device.Device) (string, error) {
 // executeEventHook executes an event hook if configured
 func (d *Daemon) executeEventHook(event string, dev *device.Device) {
 	if hookCmd, ok := d.config.EventHooks[event]; ok {
-		// Replace placeholders
-		cmd := strings.ReplaceAll(hookCmd, "{device}", dev.Path)
-		cmd = strings.ReplaceAll(cmd, "{label}", dev.Label)
-		cmd = strings.ReplaceAll(cmd, "{uuid}", dev.UUID)
-		cmd = strings.ReplaceAll(cmd, "{mount_point}", dev.MountPoint)
+		// Properly escape all device values to prevent command injection
+		escapedDevice := shellquote.Join(dev.Path)
+		escapedLabel := shellquote.Join(dev.Label)
+		escapedUUID := shellquote.Join(dev.UUID)
+		escapedMountPoint := shellquote.Join(dev.MountPoint)
+
+		// Replace placeholders with escaped values
+		cmd := strings.ReplaceAll(hookCmd, "{device}", escapedDevice)
+		cmd = strings.ReplaceAll(cmd, "{label}", escapedLabel)
+		cmd = strings.ReplaceAll(cmd, "{uuid}", escapedUUID)
+		cmd = strings.ReplaceAll(cmd, "{mount_point}", escapedMountPoint)
 
 		log.Printf("Executing event hook for %s: %s", event, cmd)
 
@@ -405,7 +427,32 @@ func (d *Daemon) UnmountDevice(dev *device.Device) error {
 
 // openInFileManager opens a path in the configured file manager
 func (d *Daemon) openInFileManager(path string) {
-	cmd := exec.Command(d.config.FileManager, path)
+	// Validate that the path is absolute and clean to prevent command injection
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		log.Printf("Failed to get absolute path: %v", err)
+		return
+	}
+
+	// Clean the path to remove any .. or other traversal attempts
+	cleanPath := filepath.Clean(absPath)
+
+	// Verify the path exists
+	if _, err := os.Stat(cleanPath); err != nil {
+		log.Printf("Path does not exist: %v", err)
+		return
+	}
+
+	// Parse file manager command to handle arguments safely
+	parts, err := shellquote.Split(d.config.FileManager)
+	if err != nil || len(parts) == 0 {
+		log.Printf("Invalid file manager command: %v", err)
+		return
+	}
+
+	// Execute file manager with path as separate argument
+	args := append(parts[1:], cleanPath)
+	cmd := exec.Command(parts[0], args...)
 	if err := cmd.Start(); err != nil {
 		log.Printf("Failed to open file manager: %v", err)
 	}

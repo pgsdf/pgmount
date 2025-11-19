@@ -134,7 +134,9 @@ func (c *Config) Save(path string) error {
 		return fmt.Errorf("failed to marshal config: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	// Use 0600 permissions (read/write for owner only) to protect sensitive data
+	// such as GELI keyfile paths, password commands, and event hooks
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("failed to write config file: %w", err)
 	}
 

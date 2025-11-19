@@ -696,8 +696,31 @@ func (d *Device) GetDisplayName() string {
 // GetMountDirectory returns the preferred mount directory name
 func (d *Device) GetMountDirectory(base string) string {
 	name := d.GetDisplayName()
-	// Sanitize the name
-	name = strings.ReplaceAll(name, "/", "_")
-	name = strings.ReplaceAll(name, " ", "_")
-	return filepath.Join(base, name)
+
+	// Sanitize the name to prevent path traversal and other security issues
+	// Only allow alphanumeric characters, hyphens, and underscores
+	sanitized := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '_'
+	}, name)
+
+	// Prevent hidden files (starting with ".")
+	if strings.HasPrefix(sanitized, ".") {
+		sanitized = "_" + sanitized[1:]
+	}
+
+	// Limit length to prevent filesystem issues
+	if len(sanitized) > 255 {
+		sanitized = sanitized[:255]
+	}
+
+	// Ensure not empty
+	if sanitized == "" || sanitized == "_" {
+		sanitized = "unnamed_device"
+	}
+
+	return filepath.Join(base, sanitized)
 }
