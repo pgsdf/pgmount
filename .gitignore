@@ -4,6 +4,9 @@ ghostmount
 ghostmount-mount
 ghostmount-umount
 ghostmount-info
+cmd/pgmount/pgmount
+cmd/pgumount/pgumount
+cmd/pginfo/pginfo
 *.exe
 *.exe~
 *.dll
