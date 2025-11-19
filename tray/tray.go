@@ -104,11 +104,12 @@ func (i *Icon) rebuildMenu() {
 		return
 	}
 
-	// Filter for partitions only
-	partitions := []*device.Device{}
+	// Filter for mountable devices (partitions or disks with filesystems)
+	mountableDevices := []*device.Device{}
 	for _, dev := range devices {
-		if dev.IsPartition && dev.IsRemovable {
-			partitions = append(partitions, dev)
+		// Include if it's a partition or if it's a disk with a filesystem
+		if dev.IsRemovable && (dev.IsPartition || dev.FSType != "") {
+			mountableDevices = append(mountableDevices, dev)
 		}
 	}
 
@@ -126,10 +127,10 @@ func (i *Icon) rebuildMenu() {
 	systray.AddSeparator()
 
 	// Add device menu items
-	if len(partitions) == 0 {
+	if len(mountableDevices) == 0 {
 		systray.AddMenuItem("No devices", "No removable devices found").Disable()
 	} else {
-		i.addDeviceMenuItems(partitions, i.menuCloseChan)
+		i.addDeviceMenuItems(mountableDevices, i.menuCloseChan)
 	}
 
 	systray.AddSeparator()
@@ -164,7 +165,7 @@ func (i *Icon) rebuildMenu() {
 
 	// Handle auto-hide
 	if i.config.Tray.AutoHide {
-		i.visible = len(partitions) > 0
+		i.visible = len(mountableDevices) > 0
 	}
 }
 
@@ -365,7 +366,8 @@ func (i *Icon) onMountAll() {
 
 	mounted := 0
 	for _, dev := range devices {
-		if dev.IsPartition && !dev.IsMounted && dev.IsRemovable {
+		// Mount if it's removable, not mounted, and is either a partition or has a filesystem
+		if dev.IsRemovable && !dev.IsMounted && (dev.IsPartition || dev.FSType != "") {
 			if i.onMountFunc != nil {
 				if err := i.onMountFunc(dev); err != nil {
 					log.Printf("Failed to mount %s: %v", dev.Path, err)
@@ -394,7 +396,8 @@ func (i *Icon) onUnmountAll() {
 
 	unmounted := 0
 	for _, dev := range devices {
-		if dev.IsPartition && dev.IsMounted && dev.IsRemovable {
+		// Unmount if it's removable, mounted, and is either a partition or has a filesystem
+		if dev.IsRemovable && dev.IsMounted && (dev.IsPartition || dev.FSType != "") {
 			if i.onUnmountFunc != nil {
 				if err := i.onUnmountFunc(dev); err != nil {
 					log.Printf("Failed to unmount %s: %v", dev.Path, err)

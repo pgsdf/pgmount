@@ -73,7 +73,8 @@ func (d *Daemon) MountAll() error {
 	}
 
 	for _, dev := range devices {
-		if dev.IsPartition && !dev.IsMounted {
+		// Mount if it's not mounted and is either a partition or has a filesystem
+		if !dev.IsMounted && (dev.IsPartition || dev.FSType != "") {
 			if err := d.mountDevice(dev); err != nil {
 				log.Printf("Failed to mount %s: %v", dev.Path, err)
 			}
@@ -156,11 +157,11 @@ func (d *Daemon) onDeviceAdded(dev *device.Device) {
 	// Execute event hook
 	d.executeEventHook("device_added", dev)
 
-	// Auto-mount if enabled
-	if dev.IsPartition && d.config.ShouldAutomountDevice(dev.Label, dev.UUID, dev.Path) {
+	// Auto-mount if enabled (for partitions or disks with filesystems)
+	if (dev.IsPartition || dev.FSType != "") && d.config.ShouldAutomountDevice(dev.Label, dev.UUID, dev.Path) {
 		if err := d.mountDevice(dev); err != nil {
 			log.Printf("Failed to automount %s: %v", dev.Path, err)
-			
+
 			if d.config.Notifications.Enabled && d.config.Notifications.JobFailed > 0 {
 				notify.Send("Mount Failed", fmt.Sprintf("Failed to mount %s: %v", dev.GetDisplayName(), err),
 					int(d.config.Notifications.JobFailed*1000))
