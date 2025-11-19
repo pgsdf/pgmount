@@ -19,14 +19,15 @@ import (
 
 // Daemon handles automounting and device events
 type Daemon struct {
-	config    *config.Config
-	deviceMgr *device.Manager
+	config            *config.Config
+	deviceMgr         *device.Manager
 	// TODO: devd socket monitoring could be implemented here for real-time events
 	// instead of polling. See monitorDevd() for details.
-	stopChan chan struct{}
-	wg       sync.WaitGroup
-	mu       sync.Mutex
-	mounted  map[string]*device.Device
+	stopChan          chan struct{}
+	wg                sync.WaitGroup
+	mu                sync.Mutex
+	mounted           map[string]*device.Device
+	onDeviceChangedFn func() // Callback for device changes
 }
 
 // New creates a new daemon instance
@@ -160,12 +161,17 @@ func (d *Daemon) onDeviceAdded(dev *device.Device) {
 	if dev.IsPartition && d.config.ShouldAutomountDevice(dev.Label, dev.UUID, dev.Path) {
 		if err := d.mountDevice(dev); err != nil {
 			log.Printf("Failed to automount %s: %v", dev.Path, err)
-			
+
 			if d.config.Notifications.Enabled && d.config.Notifications.JobFailed > 0 {
 				notify.Send("Mount Failed", fmt.Sprintf("Failed to mount %s: %v", dev.GetDisplayName(), err),
 					int(d.config.Notifications.JobFailed*1000))
 			}
 		}
+	}
+
+	// Notify tray of device changes
+	if d.onDeviceChangedFn != nil {
+		d.onDeviceChangedFn()
 	}
 }
 
@@ -192,6 +198,11 @@ func (d *Daemon) onDeviceRemoved(path string) {
 		}
 		notify.Send("Device Removed", fmt.Sprintf("%s disconnected", displayName),
 			int(d.config.Notifications.DeviceRemoved*1000))
+	}
+
+	// Notify tray of device changes
+	if d.onDeviceChangedFn != nil {
+		d.onDeviceChangedFn()
 	}
 }
 
@@ -260,6 +271,11 @@ func (d *Daemon) mountDevice(dev *device.Device) error {
 		go d.openInFileManager(mountPoint)
 	}
 
+	// Notify tray of device changes
+	if d.onDeviceChangedFn != nil {
+		d.onDeviceChangedFn()
+	}
+
 	return nil
 }
 
@@ -298,6 +314,11 @@ func (d *Daemon) unmountDevice(dev *device.Device) error {
 
 	// Execute event hook
 	d.executeEventHook("device_unmounted", dev)
+
+	// Notify tray of device changes
+	if d.onDeviceChangedFn != nil {
+		d.onDeviceChangedFn()
+	}
 
 	return nil
 }
@@ -413,6 +434,11 @@ func (d *Daemon) executeEventHook(event string, dev *device.Device) {
 // GetDeviceManager returns the device manager
 func (d *Daemon) GetDeviceManager() *device.Manager {
 	return d.deviceMgr
+}
+
+// SetDeviceChangedCallback sets the callback for device changes
+func (d *Daemon) SetDeviceChangedCallback(fn func()) {
+	d.onDeviceChangedFn = fn
 }
 
 // MountDevice mounts a specific device (public method for tray integration)
